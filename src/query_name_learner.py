@@ -1,5 +1,6 @@
 import pickle
 import logging
+import multiprocessing
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
@@ -70,7 +71,7 @@ def run():
 
     param_grid = {
         # 'svc__C': [1, 5],
-        'mnb__alpha' : [0.0, 0.1, 1, 0.5]
+        'mnb__alpha' : [1e-10, 1.0]
     }
 
     pipeline = Pipeline(
@@ -80,6 +81,7 @@ def run():
             ('mnb', MultinomialNB())
         ]
     )
-    grid = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=1)
+    grid = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count()-1)
     grid.fit(X_segments, y_segments)
+    LOG.info(f'Best score: {grid.best_score_} | param: {grid.best_params_}')
     from IPython import embed; embed()
