@@ -1,5 +1,4 @@
 import sys
-import os
 import logging
 
 import inspect
@@ -8,7 +7,9 @@ import argh
 import pathlib2
 import pandas
 
+import query_name_learner
 import DNSPreprocessor
+import data_loader
 import utils
 
 LOG = logging.getLogger(__name__)
@@ -28,6 +29,15 @@ def preprocess(data_dir_name: str, out_dir_name: str):
 
     for file_path in data_dir.glob('dnsSummary_user*.pcap.csv'): #dnsSummary_user292.pcap.csv
         preprocess_file(str(file_path), str(out_dir.joinpath(f'{file_path.name}-proc.csv')))
+
+def shell(data_dir: str):
+    ds = data_loader.Dataset.from_dir(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
+    from IPython import embed; embed()
+
+
+def run(data_dir: str):
+    data_loader.load(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
+    query_name_learner.run()
 
 
 def _main():
