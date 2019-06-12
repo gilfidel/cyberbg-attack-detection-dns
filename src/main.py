@@ -35,9 +35,17 @@ def shell(data_dir: str):
     from IPython import embed; embed()
 
 
-def run(data_dir: str):
+def run_multiclass(data_dir: str):
     data_loader.load(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
-    query_name_learner.run()
+    query_name_learner.run_multiclass()
+
+def run_oneclass(data_dir: str):
+    data_loader.load(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
+    query_name_learner.run_oneclass()
+
+
+def load(file_name: str):
+    query_name_learner.load(file_name)
 
 
 def _main():

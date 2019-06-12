@@ -39,11 +39,11 @@ class Dataset(object):
         self.users_and_dfs = users_and_dfs
 
 
-        self.tfidf = TfidfVectorizer(use_idf=True)
-        domains_texts = []
-        for _, df in self.users_and_dfs:
-            domains_texts.append(segment_to_text(df['dns_qry_name'].unique()))
-        self.tfidf.fit(domains_texts)
+        # self.tfidf = TfidfVectorizer(use_idf=True)
+        # domains_texts = []
+        # for _, df in self.users_and_dfs:
+        #     domains_texts.append(segment_to_text(df['dns_qry_name'].unique()))
+        # self.tfidf.fit(domains_texts)
 
     def __iter__(self):
         return iter(self.users_and_dfs)
