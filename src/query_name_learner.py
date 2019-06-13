@@ -22,6 +22,10 @@ import utils
 
 LOG = logging.getLogger(__name__)
 
+SEGMENT_SIZE_IN_SEC = 30*60
+MIN_SEGMENT_DNS_QUERIES = 5
+TRAIN_SET_SIZE = 0.8
+
 def _split_dns_hostnames_to_segments(df, segment_size_in_sec: float):
     segment_start_time = None
     segment = []
@@ -45,8 +49,11 @@ def _preprocess_dns_hostname_data_multiclass(segment_size_in_sec: float):
     unique_users = []
     for user, df in data_loader.dataset:
         LOG.debug(f'Loading data of {user}')
-        segments = _split_dns_hostnames_to_segments(df, segment_size_in_sec)
-        text_segments =  [data_loader.segment_to_text(s) for s in segments]
+        segments = list(_split_dns_hostnames_to_segments(df, segment_size_in_sec))
+        text_segments =  [data_loader.segment_to_text(s) for s in segments if len(s) >= MIN_SEGMENT_DNS_QUERIES]
+        segments_left_out = [s for s in segments if len(s) < MIN_SEGMENT_DNS_QUERIES]
+        segments_left_out_str = "\n".join(','.join(s) for s in segments_left_out)
+        LOG.debug(f'''segments_left_out: {len(segments_left_out)}:\n{segments_left_out_str}''')
         X += text_segments
         users += [user]* len(text_segments)
 
@@ -68,15 +75,13 @@ def _preprocess_dns_hostname_data_per_user(segment_size_in_sec: float):
 
     return per_user_text_segments
 
-SEGMENT_SIZE_IN_SEC = 30*60
+
 
 def _save_stuff(stuff, file_name: str):
     joblib.dump(stuff, file_name)
 
 def _load_stuff(file_name: str):
     return joblib.load(file_name)
-
-TRAIN_SET_SIZE = 0.8
 
 def _get_estimator_type(estimator):
     estimator = getattr(estimator, 'best_estimator_', estimator)
@@ -87,7 +92,7 @@ def _safe_get_best_estimator(estimator):
     return getattr(estimator, 'best_estimator_', estimator)
 
 def run_multiclass(out_file_name=None):
-    segments_file_name = f'segments_{SEGMENT_SIZE_IN_SEC}.pickle'
+    segments_file_name = f'segments_{SEGMENT_SIZE_IN_SEC}_{MIN_SEGMENT_DNS_QUERIES}.job.xz'
 
     try:
         X_segments, y_segments = _load_stuff(segments_file_name)
@@ -99,11 +104,10 @@ def run_multiclass(out_file_name=None):
 
     param_grid = {
         # 'svc__C': [1, 5],
-        # 'feature__ngram_range' : [(1,1), (1,2), (1,3), (1,4), (1,5), (1,6), (1,7)],
         # 'mnb__alpha' : [1e-10, 1e-5, 0.1, 0.5],
 
-        'feature__ngram_range': [(1,1),(1,2),(1,3),(1, 4)],
-        'mnb__alpha': [1e-10, 1e-5, 0.1, 0.5],
+        'feature__ngram_range': [(1,3),(1, 4),(1,5)],
+        'mnb__alpha': [1e-10, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2],
         # 'cnb__alpha': [1e-10, 1e-5, 0.1, 0.5],
 
         # 'xgb__max_depth': [5]
@@ -133,7 +137,7 @@ def run_multiclass(out_file_name=None):
 
     if out_file_name is None:
         score = metrics.f1_score(y_test, y_test_pred, average='weighted')
-        out_file_name = f'{_get_estimator_type(estimator)}-{score:.2f}-{utils.get_current_time_stamp()}.job'
+        out_file_name = f'{_get_estimator_type(estimator)}-{score:.2f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{utils.get_current_time_stamp()}.job.xz'
 
     LOG.info( f'Saving state to: {out_file_name}')
     _save_stuff((estimator, X_train, X_test, y_train, y_test, y_test_pred), out_file_name)
@@ -143,38 +147,3 @@ def run_multiclass(out_file_name=None):
 def load(file_name: str):
     estimator, X_train, X_test, y_train, y_test, y_test_pred = _load_stuff(file_name)
     from IPython import embed; embed()
-
-def run_oneclass():
-    segments_file_name = f'segments_{SEGMENT_SIZE_IN_SEC}-per_user.pickle'
-    try:
-        per_user_text_segments = _load_stuff(segments_file_name)
-    except FileNotFoundError:
-        per_user_text_segments = _preprocess_dns_hostname_data_per_user(segment_size_in_sec=SEGMENT_SIZE_IN_SEC)
-        _save_stuff(per_user_text_segments, segments_file_name)
-
-    for user, text_segments in per_user_text_segments.items():
-        LOG.info(f'Training on {user} data')
-
-        train_text_segments, test_text_segments = train_test_split(text_segments, train_size=0.8 )
-
-        param_grid = {
-            # 'svc__C': [1, 5],
-            # 'svm_': [1e-10, 1.0]
-        }
-
-        pipeline = Pipeline(
-            steps=[
-                ('feature', TfidfVectorizer()),
-                # ('svc', SVC(decision_function_shape='ovr'))
-                ('svm', OneClassSVM())
-            ]
-        )
-
-        pipeline.fit(train_text_segments)
-
-        from IPython import embed; embed()
-
-        grid = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count() - 1)
-        LOG.info(f'Best score: {grid.best_score_} | param: {grid.best_params_}')
-        from IPython import embed;
-        embed()
