@@ -1,9 +1,13 @@
 import pickle
 import logging
 import multiprocessing
+from dataclasses import dataclass
+
+
 import numpy
 import joblib
 
+from sklearn.base import BaseEstimator
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB, ComplementNB
 from sklearn.preprocessing import LabelEncoder
@@ -16,6 +20,7 @@ from sklearn.neural_network import MLPClassifier
 from skorch.net import NeuralNet
 
 import xgboost
+from typing import Tuple
 
 import data_loader
 import utils
@@ -24,9 +29,26 @@ LOG = logging.getLogger(__name__)
 
 SEGMENT_SIZE_IN_SEC = 30*60
 MIN_SEGMENT_DNS_QUERIES = 5
+OVERLAP_PERCENT=0.2
 TRAIN_SET_SIZE = 0.8
+TRAIN_TEST_SHUFFLE=True
 
-def _split_dns_hostnames_to_segments(df, segment_size_in_sec: float):
+@dataclass
+class State:
+    X_train: object
+    y_train: object
+    X_test: object
+    y_test: object
+
+    estimator: BaseEstimator
+    y_test_pred: object
+
+    segment_size_in_sec: int = SEGMENT_SIZE_IN_SEC
+    min_segment_dns_queries: int = MIN_SEGMENT_DNS_QUERIES
+
+
+
+def _split_dns_hostnames_to_segments(df, segment_size_in_sec: int, overlap: float = None):
     segment_start_time = None
     segment = []
     for _, r in df.iterrows():
@@ -43,29 +65,7 @@ def _split_dns_hostnames_to_segments(df, segment_size_in_sec: float):
     if segment:
         yield segment
 
-def _preprocess_dns_hostname_data_multiclass(segment_size_in_sec: float):
-    X = []
-    users = []
-    unique_users = []
-    for user, df in data_loader.dataset:
-        LOG.debug(f'Loading data of {user}')
-        segments = list(_split_dns_hostnames_to_segments(df, segment_size_in_sec))
-        text_segments =  [data_loader.segment_to_text(s) for s in segments if len(s) >= MIN_SEGMENT_DNS_QUERIES]
-        segments_left_out = [s for s in segments if len(s) < MIN_SEGMENT_DNS_QUERIES]
-        segments_left_out_str = "\n".join(','.join(s) for s in segments_left_out)
-        LOG.debug(f'''segments_left_out: {len(segments_left_out)}:\n{segments_left_out_str}''')
-        X += text_segments
-        users += [user]* len(text_segments)
-
-        unique_users.append(user)
-
-    yenc = LabelEncoder()
-    yenc.fit(unique_users)
-    y = yenc.transform(users)
-
-    return X,y
-
-def _preprocess_dns_hostname_data_per_user(segment_size_in_sec: float):
+def _load_dns_hostname_data_per_user(segment_size_in_sec: int):
     per_user_text_segments = {}
     for user, df in data_loader.dataset:
         LOG.debug(f'Loading data of {user}')
@@ -91,23 +91,49 @@ def _get_estimator_type(estimator):
 def _safe_get_best_estimator(estimator):
     return getattr(estimator, 'best_estimator_', estimator)
 
+def _split_train_test(per_user_segments: dict, train_size=TRAIN_SET_SIZE, shuffle=False) -> Tuple[dict, dict]:
+    per_user_train = {}
+    per_user_test = {}
+    for user, segments in per_user_segments.items():
+        per_user_train[user], per_user_test[user] = train_test_split(segments, shuffle=shuffle, train_size=train_size)
+
+    return per_user_train, per_user_test
+
+def _per_user_segments_to_X_and_y(per_user_segments):
+    all_users = sorted(list(per_user_segments.keys()))
+    yenc = LabelEncoder()
+    yenc.fit(all_users)
+
+    X = []
+    y_parts = []
+    y = []
+    for user, segments in per_user_segments.items():
+        X += segments
+        y_parts.append( yenc.transform([user]).repeat(len(segments)) )
+
+    y = numpy.concatenate(y_parts)
+    return X, y
+
 def run_multiclass(out_file_name=None):
-    segments_file_name = f'segments_{SEGMENT_SIZE_IN_SEC}_{MIN_SEGMENT_DNS_QUERIES}.job.xz'
+    segments_file_name = f'segments_per_user_{SEGMENT_SIZE_IN_SEC}_{MIN_SEGMENT_DNS_QUERIES}.job.xz'
 
     try:
-        X_segments, y_segments = _load_stuff(segments_file_name)
+        per_user_segments = _load_stuff(segments_file_name)
     except FileNotFoundError:
-        X_segments, y_segments = _preprocess_dns_hostname_data_multiclass(segment_size_in_sec=SEGMENT_SIZE_IN_SEC)
-        _save_stuff((X_segments, y_segments), segments_file_name)
+        per_user_segments = _load_dns_hostname_data_per_user(segment_size_in_sec=SEGMENT_SIZE_IN_SEC)
+        _save_stuff(per_user_segments, segments_file_name)
 
-    X_train, X_test, y_train, y_test = train_test_split(X_segments, y_segments, stratify=y_segments, train_size=TRAIN_SET_SIZE)
+    per_user_train, per_user_test = _split_train_test(per_user_segments, shuffle=TRAIN_TEST_SHUFFLE, train_size=TRAIN_SET_SIZE)
+
+    X_train, y_train = _per_user_segments_to_X_and_y(per_user_train)
+    X_test, y_test = _per_user_segments_to_X_and_y(per_user_test)
 
     param_grid = {
         # 'svc__C': [1, 5],
         # 'mnb__alpha' : [1e-10, 1e-5, 0.1, 0.5],
 
-        'feature__ngram_range': [(1,3),(1, 4),(1,5)],
-        'mnb__alpha': [1e-10, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2],
+        'feature__ngram_range': [(1, 4)],
+        'mnb__alpha': [1e-3],
         # 'cnb__alpha': [1e-10, 1e-5, 0.1, 0.5],
 
         # 'xgb__max_depth': [5]
@@ -137,13 +163,14 @@ def run_multiclass(out_file_name=None):
 
     if out_file_name is None:
         score = metrics.f1_score(y_test, y_test_pred, average='weighted')
-        out_file_name = f'{_get_estimator_type(estimator)}-{score:.2f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{utils.get_current_time_stamp()}.job.xz'
+        out_file_name = f'{_get_estimator_type(estimator)}-{score:.2f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{"TRAIN_TEST_SHUFFLE" if TRAIN_TEST_SHUFFLE else "NO_TRAIN_TEST_SHUFFLE"}-{utils.get_current_time_stamp()}.job.gz'
 
     LOG.info( f'Saving state to: {out_file_name}')
-    _save_stuff((estimator, X_train, X_test, y_train, y_test, y_test_pred), out_file_name)
+    _save_stuff(State(X_train, X_test, y_train, y_test, estimator, y_test_pred), out_file_name)
+    LOG.debug( 'Done')
 
     from IPython import embed;embed()
 
 def load(file_name: str):
-    estimator, X_train, X_test, y_train, y_test, y_test_pred = _load_stuff(file_name)
+    state: State = _load_stuff(file_name)
     from IPython import embed; embed()
