@@ -42,6 +42,7 @@ class State:
 
     estimator: BaseEstimator
     y_test_pred: object
+    y_test_proba: object = None
 
     segment_size_in_sec: int = SEGMENT_SIZE_IN_SEC
     min_segment_dns_queries: int = MIN_SEGMENT_DNS_QUERIES
@@ -99,7 +100,7 @@ def _split_train_test(per_user_segments: dict, train_size=TRAIN_SET_SIZE, shuffl
 
     return per_user_train, per_user_test
 
-def _per_user_segments_to_X_and_y(per_user_segments):
+def _per_user_segments_to_multiclass_X_and_y(per_user_segments):
     all_users = sorted(list(per_user_segments.keys()))
     yenc = LabelEncoder()
     yenc.fit(all_users)
@@ -114,20 +115,26 @@ def _per_user_segments_to_X_and_y(per_user_segments):
     y = numpy.concatenate(y_parts)
     return X, y
 
-def run_multiclass(out_file_name=None):
-    segments_file_name = f'segments_per_user_{SEGMENT_SIZE_IN_SEC}_{MIN_SEGMENT_DNS_QUERIES}.job.xz'
+def _per_user_segments_to_per_user_one_v_all_X_and_y(per_user_segments):
+    per_user_X_and_y = {}
 
-    try:
-        per_user_segments = _load_stuff(segments_file_name)
-    except FileNotFoundError:
-        per_user_segments = _load_dns_hostname_data_per_user(segment_size_in_sec=SEGMENT_SIZE_IN_SEC)
-        _save_stuff(per_user_segments, segments_file_name)
+    for user in per_user_segments.keys():
+        user_segments = per_user_segments[user]
+        other_segments = sum([segs for other_user, segs in per_user_segments.items() if other_user != user], [])
 
-    per_user_train, per_user_test = _split_train_test(per_user_segments, shuffle=TRAIN_TEST_SHUFFLE, train_size=TRAIN_SET_SIZE)
+        X = user_segments + other_segments
+        y = numpy.concatenate(
+            (
+                numpy.array([1]).repeat(len(user_segments)),
+                numpy.array([0]).repeat(len(other_segments)),
+            ),
+        )
 
-    X_train, y_train = _per_user_segments_to_X_and_y(per_user_train)
-    X_test, y_test = _per_user_segments_to_X_and_y(per_user_test)
+        per_user_X_and_y[user] = X,y
 
+    return per_user_X_and_y
+
+def _create_grid_searcher():
     param_grid = {
         # 'svc__C': [1, 5],
         # 'mnb__alpha' : [1e-10, 1e-5, 0.1, 0.5],
@@ -139,19 +146,87 @@ def run_multiclass(out_file_name=None):
         # 'xgb__max_depth': [5]
     }
 
+    pipeline = _create_estimator()
+    estimator = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count() - 1)
+
+    return estimator
+
+def _create_estimator():
     pipeline = Pipeline(
         steps=[
-            ('feature', TfidfVectorizer()),
+            ('feature', TfidfVectorizer(ngram_range=(1,4))),
             # ('svc', SVC()),
-            ('mnb', MultinomialNB())
+            ('mnb', MultinomialNB(alpha=1e-3))
             # ('cnb', ComplementNB()),
             # ('xgb', xgboost.XGBClassifier(max_depth=5)),
             # ('ann', MLPClassifier((1000,200, 100,))),
         ]
     )
-    estimator = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count()-1)
-    # estimator = pipeline
+
+    return pipeline
+
+
+SEGMENT_SIZE_IN_SEC = 30*60
+MIN_SEGMENT_DNS_QUERIES = 5
+OVERLAP_PERCENT=0.2
+TRAIN_SET_SIZE = 0.8
+TRAIN_TEST_SHUFFLE=True
+
+
+def run_one_v_all(save_estimator=True):
+    LOG.info( f'run_one_v_all: SEGMENT_SIZE_IN_SEC: {SEGMENT_SIZE_IN_SEC} | MIN_SEGMENT_DNS_QUERIES: {MIN_SEGMENT_DNS_QUERIES} | TRAIN_TEST_SHUFFLE: {TRAIN_TEST_SHUFFLE} | save_estimator: {save_estimator}')
+
+    per_user_train, per_user_test = _load_per_user_train_and_test()
+
+    per_user_train_X_and_y = _per_user_segments_to_per_user_one_v_all_X_and_y(per_user_train)
+    per_user_test_X_and_y = _per_user_segments_to_per_user_one_v_all_X_and_y(per_user_test)
+
+    per_user_states = {}
+    auc_scores = []
+    for user in per_user_train_X_and_y.keys():
+        LOG.info( f'{user}:: Training')
+        X_train, y_train = per_user_train_X_and_y[user]
+        X_test, y_test = per_user_test_X_and_y[user]
+
+        # estimator = _create_grid_searcher()
+        estimator = _create_estimator()
+
+        estimator.fit(X_train, y_train)
+
+        best_score = getattr(estimator, 'best_score_', None)
+        best_params = getattr(estimator, 'best_params_', None)
+        if best_score:
+            LOG.info(f'Best score: {best_score} | param: {best_params}')
+
+        y_test_pred = estimator.predict(X_test)
+        y_test_proba = estimator.predict_proba(X_test)
+
+        auc = metrics.roc_auc_score(y_test, y_test_proba[:,1])
+        LOG.info(f'{user}:: test set auc={auc:.3f}')
+
+        auc_scores.append(auc)
+
+        per_user_states[user] = State(X_train, y_train, X_test, y_test, estimator if save_estimator else None, y_test_pred, y_test_proba)
+
+
+    f1_scores = [metrics.f1_score(s.y_test, s.y_test_pred) for s in per_user_states.values()]
+
+    out_file_name = f'1vAll-{_get_estimator_type(estimator)}-f1_{numpy.mean(f1_scores):.2f}-auc_{numpy.mean(auc_scores):.3f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{"TRAIN_TEST_SHUFFLE" if TRAIN_TEST_SHUFFLE else "NO_TRAIN_TEST_SHUFFLE"}-{utils.get_current_time_stamp()}.job.gz'
+    LOG.info(f'Saving state to: {out_file_name}')
+    _save_stuff(per_user_states, out_file_name)
+    LOG.debug('Done')
+    from IPython import embed; embed()
+
+def run_multiclass(out_file_name=None):
+    per_user_train, per_user_test = _load_per_user_train_and_test()
+
+    X_train, y_train = _per_user_segments_to_multiclass_X_and_y(per_user_train)
+    X_test, y_test = _per_user_segments_to_multiclass_X_and_y(per_user_test)
+
+
+    estimator = _create_grid_searcher()
     estimator.fit(X_train, y_train)
+
 
     best_score = getattr(estimator, 'best_score_', None)
     best_params = getattr(estimator, 'best_params_', None)
@@ -161,15 +236,30 @@ def run_multiclass(out_file_name=None):
     y_test_pred = estimator.predict(X_test)
     LOG.info(f'Test report:\n{metrics.classification_report(y_test, y_test_pred)}')
 
+    from IPython import embed; embed()
+
     if out_file_name is None:
         score = metrics.f1_score(y_test, y_test_pred, average='weighted')
-        out_file_name = f'{_get_estimator_type(estimator)}-{score:.2f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{"TRAIN_TEST_SHUFFLE" if TRAIN_TEST_SHUFFLE else "NO_TRAIN_TEST_SHUFFLE"}-{utils.get_current_time_stamp()}.job.gz'
+        out_file_name = f'multi-{_get_estimator_type(estimator)}-{score:.2f}-{SEGMENT_SIZE_IN_SEC}-{MIN_SEGMENT_DNS_QUERIES}-{"TRAIN_TEST_SHUFFLE" if TRAIN_TEST_SHUFFLE else "NO_TRAIN_TEST_SHUFFLE"}-{utils.get_current_time_stamp()}.job.gz'
 
     LOG.info( f'Saving state to: {out_file_name}')
-    _save_stuff(State(X_train, X_test, y_train, y_test, estimator, y_test_pred), out_file_name)
+    _save_stuff(State(X_train, y_train, X_test, y_test, estimator, y_test_pred), out_file_name)
     LOG.debug( 'Done')
 
     from IPython import embed;embed()
+
+
+def _load_per_user_train_and_test():
+    segments_file_name = f'segments_per_user_{SEGMENT_SIZE_IN_SEC}_{MIN_SEGMENT_DNS_QUERIES}.job.xz'
+    try:
+        per_user_segments = _load_stuff(segments_file_name)
+    except FileNotFoundError:
+        per_user_segments = _load_dns_hostname_data_per_user(segment_size_in_sec=SEGMENT_SIZE_IN_SEC)
+        _save_stuff(per_user_segments, segments_file_name)
+    per_user_train, per_user_test = _split_train_test(per_user_segments, shuffle=TRAIN_TEST_SHUFFLE,
+                                                      train_size=TRAIN_SET_SIZE)
+    return per_user_train, per_user_test
+
 
 def load(file_name: str):
     state: State = _load_stuff(file_name)
