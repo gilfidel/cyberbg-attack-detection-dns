@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 
 def _plot(x, y, title, xlabel, ylabel, baseline=([0,1], [0,1])):
     plt.figure()
-    plt.plot(x, y, color='darkorange', lw=1, label=title)
+    plt.plot(x, y, color='darkorange', lw=5, label=title)
     plt.plot(*baseline, color='navy', lw=1, linestyle='--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])

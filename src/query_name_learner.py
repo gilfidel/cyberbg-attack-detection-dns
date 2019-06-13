@@ -215,7 +215,8 @@ def run_one_v_all(save_estimator=True):
     LOG.info(f'Saving state to: {out_file_name}')
     _save_stuff(per_user_states, out_file_name)
     LOG.debug('Done')
-    from IPython import embed; embed()
+
+    return per_user_states
 
 def run_multiclass(out_file_name=None):
     per_user_train, per_user_test = _load_per_user_train_and_test()
@@ -262,5 +263,5 @@ def _load_per_user_train_and_test():
 
 
 def load(file_name: str):
-    state: State = _load_stuff(file_name)
+    x = _load_stuff(file_name)
     from IPython import embed; embed()
