@@ -39,12 +39,12 @@ def run_multiclass(data_dir: str):
     data_loader.load(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
     query_name_learner.run_multiclass()
 
-def run(data_dir: str, save_estimator=False, segment_size_in_sec = 1800, min_segment_dns_queries=5, train_test_shuffle=False, ipython_when_done=False):
+def run(data_dir: str, save_estimator=False, segment_size = query_name_learner.SEGMENT_SIZE, overlap: float = 0.2, is_segment_size_in_seconds: bool = False, ipython_when_done=False):
     data_loader.load(data_dir, ['frame_time_relative', 'dns_qry_name', 'dns_qry_type'])
 
-    query_name_learner.SEGMENT_SIZE_IN_SEC = segment_size_in_sec
-    query_name_learner.MIN_SEGMENT_DNS_QUERIES = min_segment_dns_queries
-    query_name_learner.TRAIN_TEST_SHUFFLE = train_test_shuffle
+    query_name_learner.SEGMENT_SIZE = segment_size
+    query_name_learner.OVERLAP_FRACTION = overlap
+    query_name_learner.IS_SEGMENT_SIZE_IN_SECONDS = is_segment_size_in_seconds
 
     per_user_states = query_name_learner.run_one_v_all(save_estimator)
     if ipython_when_done:

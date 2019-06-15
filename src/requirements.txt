@@ -2,3 +2,7 @@ argh
 pathlib2
 pandas
 ipython
+keras
+tensorflow
+sklearn
+humanize
