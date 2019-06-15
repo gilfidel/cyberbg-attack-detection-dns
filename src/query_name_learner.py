@@ -38,6 +38,7 @@ LOG = logging.getLogger(__name__)
 SEGMENT_SIZE = 50
 OVERLAP_FRACTION=0.2
 IS_SEGMENT_SIZE_IN_SECONDS = False
+MIN_SEGMENT_SIZE = 5
 
 TRAIN_SET_FRACTION = 0.8
 TEST_SET_FRACTION = 0.2
@@ -58,21 +59,36 @@ class State:
 
 
 def _split_dns_hostnames_to_segments_by_time(df, segment_size_in_sec: int, overlap_fraction: float):
-    segment_start_time = None
-    segment = []
-    for _, r in df.iterrows():
-        if segment_start_time is None:
-            segment_start_time = r.frame_time_relative
+    overlap_size = segment_size_in_sec * overlap_fraction
+    step_size_in_sec = segment_size_in_sec - overlap_size
 
-        if r.frame_time_relative - segment_start_time > segment_size_in_sec: #end of segment
+    df_start_time = df.iloc[0].frame_time_relative
+    df_end_time = df.iloc[-1].frame_time_relative
+
+    for seg_start_time in range(int(df_start_time), int(df_end_time - segment_size_in_sec), int(step_size_in_sec)):
+        segment = df[numpy.logical_and(
+                    df.frame_time_relative >= seg_start_time,
+                    df.frame_time_relative <= seg_start_time + segment_size_in_sec)]['dns_qry_name'].values
+
+        if len(segment) > MIN_SEGMENT_SIZE:
             yield segment
-            segment = []
-            segment_start_time = r.frame_time_relative
 
-        segment.append(r.dns_qry_name)
-
-    if segment:
-        yield segment
+# def _split_dns_hostnames_to_segments_by_time(df, segment_size_in_sec: int, overlap_fraction: float):
+#     segment_start_time = None
+#     segment = []
+#     for _, r in df.iterrows():
+#         if segment_start_time is None:
+#             segment_start_time = r.frame_time_relative
+#
+#         if r.frame_time_relative - segment_start_time > segment_size_in_sec: #end of segment
+#             yield segment
+#             segment = []
+#             segment_start_time = r.frame_time_relative
+#
+#         segment.append(r.dns_qry_name)
+#
+#     if segment:
+#         yield segment
 
 def _split_dns_hostname_to_segments_by_count(df, segment_size: int, overlap_fraction: float):
     overlap_size = int(segment_size * overlap_fraction)
@@ -105,10 +121,11 @@ def _load_dns_hostname_data_per_user():
         LOG.debug(f'Loading data of {user}')
 
         train_df, test_df = train_set_split_func(df, TRAIN_SET_FRACTION, TEST_SET_FRACTION)
-        LOG.debug(f'Train set: {humanize.naturalsize(len(train_df))} rows | Test set: {humanize.naturalsize(len(test_df))} rows')
 
         train_segments = [data_loader.segment_to_text(s) for s in segment_split_func(train_df, SEGMENT_SIZE, OVERLAP_FRACTION)]
         test_segments = [data_loader.segment_to_text(s) for s in segment_split_func(test_df, SEGMENT_SIZE, OVERLAP_FRACTION)]
+
+        LOG.debug(f'{user}:: Train set: {humanize.naturalsize(len(train_df))} rows / {humanize.naturalsize(len(train_segments))} segments | Test set: {humanize.naturalsize(len(test_df))} rows / {humanize.naturalsize(len(test_segments))} segments')
 
         per_user_train_and_test[user] = (train_segments, test_segments)
 
@@ -288,7 +305,7 @@ def run_one_v_all(save_estimator=True):
         per_user_states[user] = State(X_train, y_train, X_test, y_test, estimator if save_estimator else None, y_test_pred, y_test_proba)
 
 
-    out_file_name = f'1vAll-{_get_estimator_type(estimator)}-f1_{numpy.mean(f1_scores):.2f}-ap_{numpy.mean(ap_scores):.3f}-{SEGMENT_SIZE}-{OVERLAP_FRACTION:.2f}-{utils.get_current_time_stamp()}.job.gz'
+    out_file_name = f'1vAll-{_get_estimator_type(estimator)}-f1_{numpy.mean(f1_scores):.2f}-ap_{numpy.mean(ap_scores):.3f}-{"TIME" if IS_SEGMENT_SIZE_IN_SECONDS else "COUNT"}-{SEGMENT_SIZE}-{OVERLAP_FRACTION:.2f}-{utils.get_current_time_stamp()}.job.gz'
     LOG.info(f'Saving state to: {out_file_name}')
     _save_stuff(per_user_states, out_file_name)
     LOG.debug('Done')
