@@ -1,5 +1,5 @@
 argh
-pathlib2
+pathlib
 pandas
 ipython
 keras

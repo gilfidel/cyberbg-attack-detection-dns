@@ -4,7 +4,7 @@ import logging
 import inspect
 import six
 import argh
-import pathlib2
+import pathlib
 import pandas
 
 import query_name_learner
@@ -22,8 +22,8 @@ def preprocess_file(file_name: str, target_file_name: str):
 
 
 def preprocess(data_dir_name: str, out_dir_name: str):
-    data_dir = pathlib2.Path(data_dir_name)
-    out_dir = pathlib2.Path(out_dir_name)
+    data_dir = pathlib.Path(data_dir_name)
+    out_dir = pathlib.Path(out_dir_name)
 
     out_dir.mkdir(parents=True, exist_ok=True)
 

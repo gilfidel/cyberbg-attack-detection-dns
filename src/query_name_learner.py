@@ -187,14 +187,12 @@ def _create_grid_searcher():
         # 'mnb__alpha' : [1e-10, 1e-5, 0.1, 0.5],
 
         'feature__ngram_range': [(1,3),(1, 4), (1,5), (1,6)],
-        'mnb__alpha': [1e-3],
-        # 'cnb__alpha': [1e-10, 1e-5, 0.1, 0.5],
-
+        'nb__alpha': [1e-10, 1e-3, 1e-5],
         # 'xgb__max_depth': [5]
     }
 
     pipeline = _create_estimator()
-    estimator = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count() - 1, scoring='average_precision')
+    estimator = GridSearchCV(pipeline, param_grid, iid=True, cv=5, verbose=3, n_jobs=multiprocessing.cpu_count() - 1, scoring='f1')
 
     return estimator
 
@@ -232,8 +230,8 @@ def _create_estimator():
         steps=[
             ('feature', TfidfVectorizer(ngram_range=(1,4))),
             # ('svc', SVC()),
-            ('mnb', MultinomialNB(alpha=1e-3))
-            # ('cnb', ComplementNB()),
+            ('nb', MultinomialNB(alpha=1e-3))
+            # ('cnb', ComplementNB(alpha=1e-3)),
             # ('xgb', xgboost.XGBClassifier(max_depth=5)),
             #('ann', MLPClassifier((200, 10), verbose=True)),
             # ('keras', KerasClassifier(build_fn=_create_keras_model, ))
@@ -305,7 +303,7 @@ def run_one_v_all(save_estimator=True):
         per_user_states[user] = State(X_train, y_train, X_test, y_test, estimator if save_estimator else None, y_test_pred, y_test_proba)
 
 
-    out_file_name = f'1vAll-{_get_estimator_type(estimator)}-f1_{numpy.mean(f1_scores):.2f}-ap_{numpy.mean(ap_scores):.3f}-{"TIME" if IS_SEGMENT_SIZE_IN_SECONDS else "COUNT"}-{SEGMENT_SIZE}-{OVERLAP_FRACTION:.2f}-{utils.get_current_time_stamp()}.job.gz'
+    out_file_name = f'1vAll-_{TRAIN_SET_FRACTION:.2f}_{TEST_SET_FRACTION:.2f}_{_get_estimator_type(estimator)}-f1_{numpy.mean(f1_scores):.2f}-ap_{numpy.mean(ap_scores):.3f}-{"TIME" if IS_SEGMENT_SIZE_IN_SECONDS else "COUNT"}-{SEGMENT_SIZE}-{OVERLAP_FRACTION:.2f}-{utils.get_current_time_stamp()}.job.gz'
     LOG.info(f'Saving state to: {out_file_name}')
     _save_stuff(per_user_states, out_file_name)
     LOG.debug('Done')

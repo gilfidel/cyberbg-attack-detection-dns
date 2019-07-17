@@ -3,7 +3,7 @@ import re
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pandas
-import pathlib2
+import pathlib
 
 LOG = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class Dataset(object):
     def from_dir(cls, data_dir: str, usecols=None):
         users_and_dfs = []
 
-        dir_path = pathlib2.Path(data_dir)
+        dir_path = pathlib.Path(data_dir)
         for file_path in dir_path.glob('*proc.csv'):
             mo = DATA_FILE_NAME_PATTERN.match(file_path.name)
             if mo is None:

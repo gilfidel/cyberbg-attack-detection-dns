@@ -4,11 +4,11 @@ import time
 import logging
 import logging.config
 
-import pathlib2
+import pathlib
 
 
 def init_logging(log_file_name):
-    pathlib2.Path(log_file_name).parent.mkdir(exist_ok=True)
+    pathlib.Path(log_file_name).parent.mkdir(exist_ok=True)
     logging.config.dictConfig({
         'version': 1,
         'formatters': {
