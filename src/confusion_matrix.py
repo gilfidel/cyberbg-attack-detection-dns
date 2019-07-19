@@ -17,18 +17,22 @@ def get_confusion_matrix(y_true, y_pred, normalize=True):
 
 def plot_confusion_matrix(y_true, y_pred, classes=None,
                           normalize=False,
-                          title=None,
+                          add_to_title=None,
+                          pdf_pages_export = None,
                           cmap=plt.cm.Blues):
     """
     This function prints and plots the confusion matrix.
     Normalization can be applied by setting `normalize=True`.
     """
-    if not title:
-        if normalize:
-            title = 'Normalized confusion matrix'
-        else:
-            title = 'Confusion matrix, without normalization'
+    
+    if normalize:
+        title = 'Normalized confusion matrix '
+    else:
+        title = 'Confusion matrix, without normalization '
 
+    if (add_to_title != None):
+        title += add_to_title
+    
     # Compute confusion matrix
     cm = get_confusion_matrix(y_true, y_pred, normalize=normalize)
     
@@ -64,4 +68,10 @@ def plot_confusion_matrix(y_true, y_pred, classes=None,
                     ha="center", va="center",
                     color="white" if cm[i, j] > thresh else "black")
 #     fig
+
+    if (pdf_pages_export != None):
+        pdf_pages_export.savefig()
+    
+    plt.show()
+    plt.close()
     return ax
