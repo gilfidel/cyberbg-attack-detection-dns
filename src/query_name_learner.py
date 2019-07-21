@@ -35,10 +35,10 @@ import utils
 
 LOG = logging.getLogger(__name__)
 
-SEGMENT_SIZE = 50
-OVERLAP_FRACTION=0.2
-IS_SEGMENT_SIZE_IN_SECONDS = False
-MIN_SEGMENT_SIZE = 5
+SEGMENT_SIZE = 1800
+OVERLAP_FRACTION=0
+IS_SEGMENT_SIZE_IN_SECONDS = True
+MIN_SEGMENT_SIZE_IN_QUERIES = 5
 
 TRAIN_SET_FRACTION = 0.8
 TEST_SET_FRACTION = 0.2
@@ -70,7 +70,7 @@ def _split_dns_hostnames_to_segments_by_time(df, segment_size_in_sec: int, overl
                     df.frame_time_relative >= seg_start_time,
                     df.frame_time_relative <= seg_start_time + segment_size_in_sec)]['dns_qry_name'].values
 
-        if len(segment) > MIN_SEGMENT_SIZE:
+        if len(segment) > MIN_SEGMENT_SIZE_IN_QUERIES:
             yield segment
 
 # def _split_dns_hostnames_to_segments_by_time(df, segment_size_in_sec: int, overlap_fraction: float):
